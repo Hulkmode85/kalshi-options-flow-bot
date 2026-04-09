@@ -709,15 +709,16 @@ async def main():
                         if not allowed:
                             log.info(f"[PAPER] Risk guard would block: {reason}")
 
+                    # ── Regime detection ──
+                    regime = check_regime(float(price))
+                    if regime == "CRASH":
+                        log.warning("REGIME CRASH on kalshi_options_flow_bot — skipping trade")
+                        shadow_log({"bot": "kalshi_options_flow_bot", "regime": regime}, taken=False, reason="crash regime")
+                        continue
+
                     success = await place_order(client, market_ticker, trade["side"],
                                                price, contracts, paper, trade["note"])
                     if success:
-                        # ── Regime detection ──
-                        regime = check_regime(float(price))
-                        if regime == "CRASH":
-                            log.warning("REGIME CRASH on kalshi_options_flow_bot — skipping trade")
-                            shadow_log({"bot": "kalshi_options_flow_bot", "regime": regime}, taken=False, reason="crash regime")
-                            continue
                         shadow_log({"bot": "options_flow", "ticker": market_ticker, "side": trade["side"], "price": price, "edge": trade["edge"], "contracts": contracts}, taken=True)
                         ledger.mark(cd_key)
                         trades_this_session += 1

@@ -31,6 +31,17 @@ log = logging.getLogger("options_flow")
 from risk_guard import RiskManager
 risk_manager = RiskManager()
 
+# ── Shadow Logging ────────────────────────────────────────────────────────────
+SHADOW_LOG_FILE = os.getenv("SHADOW_LOG_FILE", "shadow_log.jsonl")
+
+def shadow_log(opportunity: dict, taken: bool, reason: str = ""):
+    entry = {"ts": time.time(), "taken": taken, "reason": reason, **opportunity}
+    try:
+        with open(SHADOW_LOG_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except:
+        pass
+
 
 def _normalize_market(m: dict) -> dict:
     """Normalize Kalshi API v2 dollar-denominated fields to legacy field names."""
@@ -642,6 +653,7 @@ async def main():
                     trade = find_kalshi_trade(all_markets, signal)
                     if not trade:
                         log.info(f"{ticker}: no edge found in {len(all_markets)} markets")
+                        shadow_log({"bot": "options_flow", "ticker": ticker, "direction": signal.direction}, taken=False, reason="no edge found")
                         continue
 
                     # 6. Size bet — Kelly criterion
@@ -672,6 +684,7 @@ async def main():
                     success = await place_order(client, market_ticker, trade["side"],
                                                price, contracts, paper, trade["note"])
                     if success:
+                        shadow_log({"bot": "options_flow", "ticker": market_ticker, "side": trade["side"], "price": price, "edge": trade["edge"], "contracts": contracts}, taken=True)
                         ledger.mark(cd_key)
                         trades_this_session += 1
 

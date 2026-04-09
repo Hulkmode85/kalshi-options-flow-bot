@@ -59,7 +59,9 @@ PAPER_MODE        = os.getenv("PAPER_MODE", "true").lower() == "true"
 PAPER_BALANCE     = float(os.getenv("PAPER_BALANCE", "5000"))
 BET_SIZE_USD      = float(os.getenv("BET_SIZE_USD", "12"))
 MAX_BET_USD       = float(os.getenv("MAX_BET_USD", "30"))
+KELLY_FRACTION    = float(os.getenv("KELLY_FRACTION", "1.0"))
 MIN_EDGE          = float(os.getenv("MIN_EDGE", "0.03"))      # 3% minimum edge
+MAKER_FEE         = float(os.getenv("MAKER_FEE", "0.0175"))
 VOLUME_RATIO_MIN  = float(os.getenv("VOLUME_RATIO_MIN", "1.5"))  # 1.5x normal volume = unusual
 POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "300"))   # 5 min
 
@@ -474,7 +476,7 @@ def find_kalshi_trade(markets: list, signal: OptionsSignal) -> Optional[dict]:
                 true_prob = implied_prob * (threshold / current) ** 0.3  # discount for distance
                 true_prob = min(true_prob, 0.85)
                 edge = true_prob - yes_price / 100
-                if edge > best_edge and edge >= MIN_EDGE:
+                if edge - MAKER_FEE > 0 and edge > best_edge and edge >= MIN_EDGE:
                     best_edge = edge
                     best = {"market": m, "side": "yes", "price": yes_price, "edge": edge,
                             "note": f"bullish options → YES above ${threshold:.0f} (current=${current:.2f})"}
@@ -486,7 +488,7 @@ def find_kalshi_trade(markets: list, signal: OptionsSignal) -> Optional[dict]:
                 # If bullish, it won't fall below → buy NO
                 true_prob_no = 1.0 - signal.confidence * 0.7
                 edge = true_prob_no - no_price / 100
-                if edge > best_edge and edge >= MIN_EDGE:
+                if edge - MAKER_FEE > 0 and edge > best_edge and edge >= MIN_EDGE:
                     best_edge = edge
                     best = {"market": m, "side": "no", "price": no_price, "edge": edge,
                             "note": f"bullish options → NO below ${threshold:.0f} (current=${current:.2f})"}
@@ -499,7 +501,7 @@ def find_kalshi_trade(markets: list, signal: OptionsSignal) -> Optional[dict]:
                 true_prob = implied_prob * (current / threshold) ** 0.3
                 true_prob = min(true_prob, 0.85)
                 edge = true_prob - yes_price / 100
-                if edge > best_edge and edge >= MIN_EDGE:
+                if edge - MAKER_FEE > 0 and edge > best_edge and edge >= MIN_EDGE:
                     best_edge = edge
                     best = {"market": m, "side": "yes", "price": yes_price, "edge": edge,
                             "note": f"bearish options → YES below ${threshold:.0f} (current=${current:.2f})"}
@@ -509,7 +511,7 @@ def find_kalshi_trade(markets: list, signal: OptionsSignal) -> Optional[dict]:
                 no_price = no_ask
                 true_prob_no = 1.0 - signal.confidence * 0.7
                 edge = true_prob_no - no_price / 100
-                if edge > best_edge and edge >= MIN_EDGE:
+                if edge - MAKER_FEE > 0 and edge > best_edge and edge >= MIN_EDGE:
                     best_edge = edge
                     best = {"market": m, "side": "no", "price": no_price, "edge": edge,
                             "note": f"bearish options → NO above ${threshold:.0f} (current=${current:.2f})"}
@@ -642,9 +644,13 @@ async def main():
                         log.info(f"{ticker}: no edge found in {len(all_markets)} markets")
                         continue
 
-                    # 6. Size bet
+                    # 6. Size bet — Kelly criterion
                     price = trade["price"]
-                    contracts = max(1, min(int(BET_SIZE_USD * 100 / price), int(MAX_BET_USD * 100 / price)))
+                    market_prob = price / 100
+                    model_prob = min(0.95, market_prob + trade["edge"])
+                    kelly_f = max(0, (model_prob - market_prob) / (1 - market_prob)) if market_prob < 1 else 0
+                    kelly_bet = max(1, min(ledger.balance * kelly_f * KELLY_FRACTION, MAX_BET_USD))
+                    contracts = max(1, int(kelly_bet * 100 / price))
                     market_ticker = trade["market"].get("ticker", "?")
 
                     # 7. Execute
